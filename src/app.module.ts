@@ -8,6 +8,8 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { AuthModule } from './modules/auth/auth.module';
+import { CatalogModule } from './modules/catalog/catalog.module';
+import { OrdersModule } from './modules/orders/orders.module';
 import { PermissionsModule } from './modules/permissions/permissions.module';
 import { RolesModule } from './modules/roles/roles.module';
 import { UsersModule } from './modules/users/users.module';
@@ -26,6 +28,8 @@ import { PrismaModule } from './prisma/prisma.module';
     UsersModule,
     RolesModule,
     PermissionsModule,
+    CatalogModule,
+    OrdersModule,
   ],
   controllers: [AppController],
   providers: [

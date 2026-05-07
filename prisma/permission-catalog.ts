@@ -34,13 +34,16 @@ const PERMISSION_GROUPS: { module: string; resources: ResourceMap }[] = [
       permission: ['read'],
     },
   },
-  // {
-  //   module: 'Communication',
-  //   resources: {
-  //     notification: ['read', 'create'],
-  //     message: ['read', 'create'],
-  //   },
-  // },
+  {
+    module: 'Coffee',
+    resources: {
+      order: [...STANDARD_ACTIONS, 'update_status', 'hold', 'complete'],
+      product: [...STANDARD_ACTIONS],
+      category: [...STANDARD_ACTIONS],
+      table: ['read', 'create', 'update', 'delete'],
+      stats: ['read'],
+    },
+  },
 ];
 
 /** Legacy / app-specific codes (outside the matrix naming). */
