@@ -25,7 +25,6 @@ model User {
   photoUrl         String?        @map("photo_url")
   refreshTokens    RefreshToken[]
   userRoles        UserRole[]
-  scope            UserScope?
   ordersCreated    Order[]        @relation("OrderCreatedBy")
 
   @@index([email])
@@ -33,15 +32,6 @@ model User {
   @@map("users")
 }
 
-model UserScope {
-  userId        String   @id @map("user_id")
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  campusIds     String[] @default([]) @map("campus_ids")
-  departmentIds String[] @default([]) @map("department_ids")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-
-  @@map("user_scopes")
-}
 
 model RefreshToken {
   id         String    @id @default(uuid())

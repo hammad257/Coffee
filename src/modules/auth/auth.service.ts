@@ -28,7 +28,6 @@ const userAuthInclude = {
       },
     },
   },
-  scope: true,
 } satisfies Prisma.UserInclude;
 
 type UserWithAuth = Prisma.UserGetPayload<{ include: typeof userAuthInclude }>;

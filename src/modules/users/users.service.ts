@@ -19,7 +19,7 @@ import {
 } from './dto/user.dto';
 
 type UserListRow = Prisma.UserGetPayload<{
-  include: { userRoles: { include: { role: true } }; scope: true };
+  include: { userRoles: { include: { role: true } } };
 }>;
 
 @Injectable()
@@ -109,7 +109,6 @@ export class UsersService {
         orderBy: { createdAt: 'desc' },
         include: {
           userRoles: { include: { role: true } },
-          scope: true,
         },
       }),
     ]);
@@ -127,7 +126,6 @@ export class UsersService {
       where: { id, deletedAt: null },
       include: {
         userRoles: { include: { role: true } },
-        scope: true,
       },
     });
     if (!user) throw new NotFoundException('User not found');
@@ -196,7 +194,6 @@ export class UsersService {
       },
       include: {
         userRoles: { include: { role: true } },
-        scope: true,
       },
     });
 
