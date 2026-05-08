@@ -23,6 +23,7 @@ import {
   UpdateOrderDto,
   UpdateTableDto,
 } from './dto/order.dto';
+import { RecentOrdersQueryDto } from './dto/dashboard.dto';
 import { randomUUID } from 'crypto';
 
 type Dec = InstanceType<typeof DecimalPkg>;
@@ -77,6 +78,12 @@ export class OrdersService {
       now.getMonth(),
       now.getDate(),
     );
+    const endOfDayExclusive = new Date(startOfDay);
+    endOfDayExclusive.setDate(endOfDayExclusive.getDate() + 1);
+
+    const startOfYesterday = new Date(startOfDay);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
     const activeStatuses: OrderStatus[] = [
@@ -91,7 +98,9 @@ export class OrdersService {
     const [
       todaySum,
       todayCompletedCount,
+      yesterdaySum,
       activeOrders,
+      todayCompletedForChart,
       monthOrders,
       tableTotal,
       tablesOccupied,
@@ -109,8 +118,28 @@ export class OrdersService {
           status: OrderStatus.COMPLETED,
         },
       }),
+      this.prisma.order.aggregate({
+        where: {
+          createdAt: {
+            gte: startOfYesterday,
+            lt: startOfDay,
+          },
+          status: OrderStatus.COMPLETED,
+        },
+        _sum: { total: true },
+      }),
       this.prisma.order.count({
         where: { status: { in: activeStatuses } },
+      }),
+      this.prisma.order.findMany({
+        where: {
+          createdAt: {
+            gte: startOfDay,
+            lt: endOfDayExclusive,
+          },
+          status: OrderStatus.COMPLETED,
+        },
+        select: { total: true, createdAt: true },
       }),
       this.prisma.order.findMany({
         where: {
@@ -125,31 +154,119 @@ export class OrdersService {
       }),
     ]);
 
+    const todayAmountDec = todaySum._sum.total
+      ? new DecimalPkg(todaySum._sum.total.toString())
+      : new DecimalPkg(0);
+    const todayAmountNum = d(todayAmountDec);
+
+    const avgOrderToday =
+      todayCompletedCount > 0
+        ? d(roundMoney(todayAmountDec.div(todayCompletedCount)))
+        : 0;
+
+    const yesterdayAmountDec = yesterdaySum._sum.total
+      ? new DecimalPkg(yesterdaySum._sum.total.toString())
+      : new DecimalPkg(0);
+
+    let revenueTrendPercentVsYesterday: number | null = null;
+    const yesterdayAmountNum = d(yesterdayAmountDec);
+    if (yesterdayAmountNum > 0) {
+      const raw = todayAmountDec
+        .minus(yesterdayAmountDec)
+        .div(yesterdayAmountDec)
+        .times(100);
+      revenueTrendPercentVsYesterday = d(roundMoney(raw));
+    }
+
+    const salesTodayByHour = Array.from({ length: 24 }, () => 0);
+    for (const row of todayCompletedForChart) {
+      const hr = row.createdAt.getHours();
+      salesTodayByHour[hr] +=
+        Number(
+          roundMoney(new DecimalPkg(row.total.toString())).toFixed(2),
+        );
+    }
+
     const monthTotalRevenue = monthOrders.reduce(
       (s, o) => s.plus(new DecimalPkg(o.total.toString())),
       new DecimalPkg(0),
     );
     const monthCount = monthOrders.length;
-    const avgOrderValue =
+    const avgOrderValueMonth =
       monthCount > 0
         ? roundMoney(monthTotalRevenue.div(monthCount))
         : new DecimalPkg(0);
 
+    const capacityPercent =
+      tableTotal > 0 ? Math.round((tablesOccupied * 100) / tableTotal) : 0;
+
     return {
       totalOrdersToday: {
-        amount: todaySum._sum.total ? d(todaySum._sum.total) : 0,
+        amount: todayAmountNum,
+        orderCount: todayCompletedCount,
         completedCount: todayCompletedCount,
+        avgOrderValue: avgOrderToday,
+        revenueTrendPercentVsYesterday,
       },
       thisMonth: {
         orderCount: monthCount,
-        avgOrderValue: d(avgOrderValue),
+        avgOrderValue: d(avgOrderValueMonth),
         revenue: d(roundMoney(monthTotalRevenue)),
       },
       activeOrders,
       tablesOccupied: {
         occupied: tablesOccupied,
         total: tableTotal,
+        capacityPercent,
       },
+      chartSalesTodayByHour: salesTodayByHour,
+    };
+  }
+
+  async recentDashboardOrders(q: RecentOrdersQueryDto) {
+    const limit = Math.min(50, Math.max(1, q.limit ?? 10));
+    const rows = await this.prisma.order.findMany({
+      take: limit,
+      orderBy: { updatedAt: 'desc' },
+      include: {
+        _count: { select: { items: true } },
+        items: {
+          orderBy: { id: 'asc' },
+          take: 1,
+          select: { productName: true, quantity: true },
+        },
+        seatedAtTable: { select: { id: true, label: true } },
+        createdBy: {
+          select: { id: true, firstName: true, lastName: true, email: true },
+        },
+      },
+    });
+
+    return {
+      requestedLimit: limit,
+      returned: rows.length,
+      data: rows.map((o) => {
+        const head = o.items[0] ?? null;
+        const cb = o.createdBy;
+        const staffName = cb
+          ? [cb.firstName, cb.lastName].filter(Boolean).join(' ').trim() ||
+            cb.email
+          : null;
+        return {
+          id: o.id,
+          orderNumber: o.orderNumber,
+          status: o.status,
+          type: o.type,
+          total: d(o.total),
+          paymentStatus: o.paymentStatus,
+          updatedAt: o.updatedAt,
+          tableLabel: o.seatedAtTable?.label ?? null,
+          headlineItemName: head?.productName ?? null,
+          headlineItemQty: head?.quantity ?? null,
+          itemCount: o._count.items,
+          staffName,
+        };
+      }),
     };
   }
 

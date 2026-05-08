@@ -18,6 +18,7 @@ import {
   PatchOrderStatusDto,
   UpdateOrderDto,
 } from './dto/order.dto';
+import { RecentOrdersQueryDto } from './dto/dashboard.dto';
 import { OrdersService } from './orders.service';
 
 @ApiTags('POS — Orders')
@@ -29,9 +30,23 @@ export class OrdersController {
   /** Register before :id */
   @Get('stats/summary')
   @Permissions('coffee.stats.read')
-  @ApiOperation({ summary: 'Dashboard KPI strip (today, month, active, tables)' })
+  @ApiOperation({
+    summary:
+      'Manager dashboard KPIs: revenue & orders today, month, active pipeline, tables, hourly chart, vs-yesterday trend',
+  })
   statsSummary() {
     return this.orders.statsSummary();
+  }
+
+  /** Register before :id */
+  @Get('dashboard/recent')
+  @Permissions('coffee.stats.read')
+  @ApiOperation({
+    summary:
+      'Dashboard: recent orders (by last update) with headline line item and counts',
+  })
+  recentDashboard(@Query() q: RecentOrdersQueryDto) {
+    return this.orders.recentDashboardOrders(q);
   }
 
   @Get()

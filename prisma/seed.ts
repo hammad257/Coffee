@@ -329,6 +329,37 @@ async function seedCatalogAndTables() {
     });
   }
 
+  const demoStockPatches: Record<
+    string,
+    {
+      stockQuantity: number;
+      lowStockThreshold: number;
+      outOfStock?: boolean;
+    }
+  > = {
+    'Flat White': { stockQuantity: 80, lowStockThreshold: 15 },
+    Espresso: { stockQuantity: 8, lowStockThreshold: 10 },
+    'Caramel Macchiato': { stockQuantity: 20, lowStockThreshold: 5 },
+    'Cold Brew': {
+      stockQuantity: 0,
+      lowStockThreshold: 5,
+      outOfStock: true,
+    },
+    'Butter Croissant': { stockQuantity: 20, lowStockThreshold: 8 },
+  };
+  for (const [name, patch] of Object.entries(demoStockPatches)) {
+    await prisma.product.updateMany({
+      where: { name },
+      data: {
+        stockQuantity: patch.stockQuantity,
+        lowStockThreshold: patch.lowStockThreshold,
+        ...(patch.outOfStock !== undefined
+          ? { outOfStock: patch.outOfStock }
+          : {}),
+      },
+    });
+  }
+
   const labels = [
     'T-01',
     'T-02',
