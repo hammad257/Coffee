@@ -17,6 +17,10 @@ import {
   ListProductsQueryDto,
   UpdateProductDto,
 } from './dto/catalog.dto';
+import {
+  StockAlertsQueryDto,
+  TopSellingProductsQueryDto,
+} from './dto/dashboard.dto';
 
 @ApiTags('POS — Catalog')
 @ApiBearerAuth('access-token')
@@ -29,6 +33,27 @@ export class ProductsController {
   @ApiOperation({ summary: 'List products (paginated)' })
   list(@Query() q: ListProductsQueryDto) {
     return this.catalog.listProducts(q);
+  }
+
+  /** Register before :id */
+  @Get('stats/top-selling')
+  @Permissions('coffee.stats.read')
+  @ApiOperation({
+    summary:
+      'Dashboard: top products by revenue (completed orders) for today / week / month',
+  })
+  topSelling(@Query() q: TopSellingProductsQueryDto) {
+    return this.catalog.topSellingProducts(q);
+  }
+
+  /** Register before :id */
+  @Get('stats/stock-alerts')
+  @Permissions('coffee.stats.read')
+  @ApiOperation({
+    summary: 'Dashboard: products that are out of stock or below low-stock threshold',
+  })
+  stockAlerts(@Query() q: StockAlertsQueryDto) {
+    return this.catalog.stockAlerts(q);
   }
 
   @Get(':id')

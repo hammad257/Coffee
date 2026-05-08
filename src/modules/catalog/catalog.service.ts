@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { OrderStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateCategoryDto,
@@ -12,6 +12,10 @@ import {
   UpdateCategoryDto,
   UpdateProductDto,
 } from './dto/catalog.dto';
+import type {
+  StockAlertsQueryDto,
+  TopSellingProductsQueryDto,
+} from './dto/dashboard.dto';
 import D from 'decimal.js';
 
 function money(v: unknown): number {
@@ -145,6 +149,8 @@ export class CatalogService {
         imageUrl: dto.imageUrl ?? null,
         outOfStock: dto.outOfStock ?? false,
         isActive: dto.isActive ?? true,
+        stockQuantity: dto.stockQuantity ?? 500,
+        lowStockThreshold: dto.lowStockThreshold ?? 10,
       },
       include: { category: true },
     });
@@ -186,6 +192,9 @@ export class CatalogService {
     if (dto.imageUrl !== undefined) data.imageUrl = dto.imageUrl;
     if (dto.outOfStock !== undefined) data.outOfStock = dto.outOfStock;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    if (dto.stockQuantity !== undefined) data.stockQuantity = dto.stockQuantity;
+    if (dto.lowStockThreshold !== undefined)
+      data.lowStockThreshold = dto.lowStockThreshold;
     return data;
   }
 
@@ -200,10 +209,184 @@ export class CatalogService {
       price: money(p.price),
       imageUrl: p.imageUrl,
       outOfStock: p.outOfStock,
+      stockQuantity: p.stockQuantity,
+      lowStockThreshold: p.lowStockThreshold,
       isActive: p.isActive,
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
       category: p.category,
+    };
+  }
+
+  private salesWindow(period: 'today' | 'week' | 'month') {
+    const now = new Date();
+    const end = now;
+    let start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (period === 'week') {
+      start = new Date(start);
+      start.setDate(start.getDate() - 6);
+    }
+    if (period === 'month') {
+      start = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+    return { start, end };
+  }
+
+  async topSellingProducts(q: TopSellingProductsQueryDto) {
+    const limit = Math.min(20, Math.max(1, q.limit ?? 5));
+    const period = q.period ?? 'month';
+    const { start, end } = this.salesWindow(period);
+
+    const orderWhere = {
+      status: OrderStatus.COMPLETED,
+      createdAt: { gte: start, lte: end },
+    };
+
+    const [byProductId, bySnapshotName] = await Promise.all([
+      this.prisma.orderItem.groupBy({
+        by: ['productId'],
+        where: {
+          productId: { not: null },
+          order: orderWhere,
+        },
+        _sum: { quantity: true, lineTotal: true },
+      }),
+      this.prisma.orderItem.groupBy({
+        by: ['productName'],
+        where: {
+          productId: null,
+          order: orderWhere,
+        },
+        _sum: { quantity: true, lineTotal: true },
+      }),
+    ]);
+
+    const ids = byProductId.map((g) => g.productId).filter(Boolean) as string[];
+    const products = ids.length
+      ? await this.prisma.product.findMany({
+          where: { id: { in: ids } },
+          select: { id: true, name: true, imageUrl: true },
+        })
+      : [];
+    const byId = new Map(products.map((pr) => [pr.id, pr]));
+
+    type Row = {
+      productId: string | null;
+      name: string;
+      imageUrl: string | null;
+      unitsSold: number;
+      revenue: number;
+    };
+
+    const merged: Row[] = [];
+
+    for (const g of byProductId) {
+      if (!g.productId) continue;
+      const pr = byId.get(g.productId);
+      merged.push({
+        productId: g.productId,
+        name: pr?.name ?? '(Removed)',
+        imageUrl: pr?.imageUrl ?? null,
+        unitsSold: g._sum.quantity ?? 0,
+        revenue: money(g._sum.lineTotal ?? 0),
+      });
+    }
+
+    for (const g of bySnapshotName) {
+      merged.push({
+        productId: null,
+        name: g.productName,
+        imageUrl: null,
+        unitsSold: g._sum.quantity ?? 0,
+        revenue: money(g._sum.lineTotal ?? 0),
+      });
+    }
+
+    merged.sort((a, b) => b.revenue - a.revenue);
+    const top = merged.slice(0, limit).map((row, idx) => ({
+      rank: idx + 1,
+      ...row,
+    }));
+
+    return {
+      period,
+      from: start.toISOString(),
+      to: end.toISOString(),
+      limit,
+      items: top,
+    };
+  }
+
+  async stockAlerts(q: StockAlertsQueryDto) {
+    const limit = Math.min(50, Math.max(1, q.limit ?? 20));
+
+    const active = await this.prisma.product.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        name: true,
+        imageUrl: true,
+        stockQuantity: true,
+        lowStockThreshold: true,
+        outOfStock: true,
+      },
+      orderBy: [{ stockQuantity: 'asc' }],
+    });
+
+    type Severity = 'OUT_OF_STOCK' | 'LOW_STOCK';
+    type AlertRow = {
+      productId: string;
+      name: string;
+      imageUrl: string | null;
+      stockQuantity: number;
+      lowStockThreshold: number;
+      severity: Severity;
+      label: string;
+    };
+
+    const alerts: AlertRow[] = [];
+
+    for (const p of active) {
+      const critical = p.outOfStock || p.stockQuantity <= 0;
+      const low =
+        !critical &&
+        p.stockQuantity > 0 &&
+        p.stockQuantity <= p.lowStockThreshold;
+
+      if (critical) {
+        alerts.push({
+          productId: p.id,
+          name: p.name,
+          imageUrl: p.imageUrl,
+          stockQuantity: p.stockQuantity,
+          lowStockThreshold: p.lowStockThreshold,
+          severity: 'OUT_OF_STOCK',
+          label: p.stockQuantity <= 0 ? 'OUT OF STOCK' : 'UNAVAILABLE',
+        });
+      } else if (low) {
+        alerts.push({
+          productId: p.id,
+          name: p.name,
+          imageUrl: p.imageUrl,
+          stockQuantity: p.stockQuantity,
+          lowStockThreshold: p.lowStockThreshold,
+          severity: 'LOW_STOCK',
+          label: `${p.stockQuantity} LEFT`,
+        });
+      }
+    }
+
+    alerts.sort((a, b) => {
+      if (a.severity !== b.severity)
+        return a.severity === 'OUT_OF_STOCK' ? -1 : 1;
+      return a.stockQuantity - b.stockQuantity;
+    });
+
+    const sliced = alerts.slice(0, limit);
+    return {
+      requestedLimit: limit,
+      returned: sliced.length,
+      items: sliced,
     };
   }
 }
