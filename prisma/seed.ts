@@ -104,25 +104,48 @@ async function main() {
   // Admin: unchanged catalog bypass in guards + all permissions here for consistency.
   await grantRolePred(roles.ADMIN.id, allPerms, () => true);
 
-  // Manager: Identity + KPI dashboard + Communication (staff-facing shop ops).
+  // Manager: full POS + Identity + dashboard.
   await grantRolePred(
     roles.MANAGER.id,
     allPerms,
     (p) =>
-      ['Identity', 'Communication'].includes(p.module) ||
+      ['Identity', 'Coffee'].includes(p.module) ||
       p.code === 'dashboard.read',
   );
 
-  // Front-of-house staff: KPI read only until order/POS routes add scoped codes.
+  // Barista: floor + kitchen workflow — read/update orders, read menu, read tables & stats.
   await grantRolePred(
     roles.BARISTA.id,
     allPerms,
-    (p) => p.code === 'dashboard.read',
+    (p) =>
+      p.code === 'dashboard.read' ||
+      (p.module === 'Coffee' &&
+        ((p.resource === 'order' &&
+          [
+            'read',
+            'create',
+            'update',
+            'update_status',
+            'hold',
+            'complete',
+          ].includes(p.action)) ||
+          (p.resource === 'product' && p.action === 'read') ||
+          (p.resource === 'category' && p.action === 'read') ||
+          (p.resource === 'table' && p.action === 'read') ||
+          (p.resource === 'stats' && p.action === 'read'))),
   );
+
+  // Cashier: checkout & register — all order/table/stats; catalog read-only; no product/category delete.
   await grantRolePred(
     roles.CASHIER.id,
     allPerms,
-    (p) => p.code === 'dashboard.read',
+    (p) =>
+      p.code === 'dashboard.read' ||
+      (p.module === 'Coffee' &&
+        !(
+          (p.resource === 'product' && p.action === 'delete') ||
+          (p.resource === 'category' && p.action === 'delete')
+        )),
   );
 
   const hash = await argon2.hash(BOOTSTRAP_PASSWORD, {
@@ -234,6 +257,99 @@ async function main() {
 
   console.log('✓ POS RBAC seed done. Password:', BOOTSTRAP_PASSWORD);
   console.log('  ADMIN login:', userDefs.find((x) => x.roleCodes.includes('ADMIN'))?.email);
+
+  await seedCatalogAndTables();
+}
+
+async function seedCatalogAndTables() {
+  const coffee = await prisma.productCategory.upsert({
+    where: { slug: 'coffee' },
+    create: { name: 'Coffee', slug: 'coffee', sortOrder: 10 },
+    update: { name: 'Coffee' },
+  });
+  const snacks = await prisma.productCategory.upsert({
+    where: { slug: 'snacks' },
+    create: { name: 'Snacks', slug: 'snacks', sortOrder: 20 },
+    update: {},
+  });
+
+  const demo: {
+    name: string;
+    price: string;
+    categoryId: string;
+    description?: string;
+    outOfStock?: boolean;
+  }[] = [
+    {
+      name: 'Flat White',
+      price: '4.50',
+      categoryId: coffee.id,
+      description: 'Creamy microfoam',
+    },
+    {
+      name: 'Espresso',
+      price: '3.25',
+      categoryId: coffee.id,
+      description: 'Double shot',
+    },
+    {
+      name: 'Caramel Macchiato',
+      price: '5.50',
+      categoryId: coffee.id,
+      description: 'Sweet & cold',
+    },
+    {
+      name: 'Cold Brew',
+      price: '4.75',
+      categoryId: coffee.id,
+      description: 'Slow steeped',
+      outOfStock: true,
+    },
+    {
+      name: 'Butter Croissant',
+      price: '3.50',
+      categoryId: snacks.id,
+      description: 'Warmed',
+    },
+  ];
+
+  for (const p of demo) {
+    const existing = await prisma.product.findFirst({
+      where: { name: p.name, categoryId: p.categoryId },
+    });
+    if (existing) continue;
+    await prisma.product.create({
+      data: {
+        categoryId: p.categoryId,
+        name: p.name,
+        description: p.description ?? null,
+        price: p.price,
+        outOfStock: p.outOfStock ?? false,
+      },
+    });
+  }
+
+  const labels = [
+    'T-01',
+    'T-02',
+    'T-03',
+    'T-04',
+    'T-05',
+    'T-06',
+    'T-07',
+    'T-08',
+    'T-09',
+    'T-10',
+  ];
+  for (const label of labels) {
+    await prisma.dineTable.upsert({
+      where: { label },
+      create: { label, capacity: 4 },
+      update: {},
+    });
+  }
+
+  console.log('✓ Seeded categories, demo products, and dine-in tables (T-01…T-10).');
 }
 
 main()
