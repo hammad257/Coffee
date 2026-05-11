@@ -12,6 +12,7 @@ import {
   PaymentStatus,
   Prisma,
   TableStatus,
+  UserStatus,
 } from '@prisma/client';
 import DecimalPkg from 'decimal.js';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -31,6 +32,18 @@ type Dec = InstanceType<typeof DecimalPkg>;
 const d = (x: unknown) => Number(x);
 
 const roundMoney = (v: Dec) => v.toDecimalPlaces(2);
+
+/** Kitchen / floor pipeline — aligns with dashboards “Active orders”. */
+const ACTIVE_PIPELINE_STATUSES: OrderStatus[] = [
+  OrderStatus.DRAFT,
+  OrderStatus.NEW,
+  OrderStatus.PREPARING,
+  OrderStatus.READY,
+  OrderStatus.SERVED,
+  OrderStatus.OUT_FOR_DELIVERY,
+  OrderStatus.DELIVERED,
+  OrderStatus.HELD,
+];
 
 @Injectable()
 export class OrdersService {
@@ -71,6 +84,62 @@ export class OrdersService {
     return { taxAmount, total };
   }
 
+  /** Quick date presets for POS dashboard filters (“Today”, “Weekly”, “Monthly”). */
+  private createdAtPreset(
+    preset: 'today' | 'week' | 'month',
+  ): Prisma.DateTimeFilter {
+    const now = new Date();
+    if (preset === 'today') {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const end = new Date(start);
+      end.setDate(end.getDate() + 1);
+      return { gte: start, lt: end };
+    }
+    if (preset === 'week') {
+      const start = new Date(now);
+      start.setDate(start.getDate() - 7);
+      start.setHours(0, 0, 0, 0);
+      return { gte: start };
+    }
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    return { gte: start };
+  }
+
+  private tenderDecimals(amount: number, orderTotal: Dec) {
+    const tendered = new DecimalPkg(amount);
+    const rawChange = tendered.minus(orderTotal);
+    const change = roundMoney(
+      rawChange.isNegative() ? new DecimalPkg(0) : rawChange,
+    );
+    return {
+      amountTendered: tendered.toFixed(2),
+      changeDue: change.toFixed(2),
+    };
+  }
+
+  private async assertActiveStaffUser(userId: string) {
+    const u = await this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        deletedAt: null,
+        status: UserStatus.ACTIVE,
+      },
+      select: { id: true },
+    });
+    if (!u) {
+      throw new ConflictException('Assignee must be an active user.');
+    }
+  }
+
+  private assertOrderEditable(status: OrderStatus) {
+    if (
+      status === OrderStatus.COMPLETED ||
+      status === OrderStatus.CANCELLED
+    ) {
+      throw new ConflictException('Cannot modify a finalized order.');
+    }
+  }
+
   async statsSummary() {
     const now = new Date();
     const startOfDay = new Date(
@@ -86,14 +155,7 @@ export class OrdersService {
 
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    const activeStatuses: OrderStatus[] = [
-      OrderStatus.DRAFT,
-      OrderStatus.NEW,
-      OrderStatus.PREPARING,
-      OrderStatus.READY,
-      OrderStatus.OUT_FOR_DELIVERY,
-      OrderStatus.HELD,
-    ];
+    const activeStatuses: OrderStatus[] = [...ACTIVE_PIPELINE_STATUSES];
 
     const [
       todaySum,
@@ -225,7 +287,18 @@ export class OrdersService {
 
   async recentDashboardOrders(q: RecentOrdersQueryDto) {
     const limit = Math.min(50, Math.max(1, q.limit ?? 10));
+    const where: Prisma.OrderWhereInput = {
+      ...(q.type ? { type: q.type } : {}),
+      ...(q.fulfillment !== undefined
+        ? { fulfillment: q.fulfillment }
+        : {}),
+      ...(q.activeOnly
+        ? { status: { in: ACTIVE_PIPELINE_STATUSES } }
+        : {}),
+    };
+
     const rows = await this.prisma.order.findMany({
+      where,
       take: limit,
       orderBy: { updatedAt: 'desc' },
       include: {
@@ -237,6 +310,9 @@ export class OrdersService {
         },
         seatedAtTable: { select: { id: true, label: true } },
         createdBy: {
+          select: { id: true, firstName: true, lastName: true, email: true },
+        },
+        assignedTo: {
           select: { id: true, firstName: true, lastName: true, email: true },
         },
       },
@@ -252,11 +328,19 @@ export class OrdersService {
           ? [cb.firstName, cb.lastName].filter(Boolean).join(' ').trim() ||
             cb.email
           : null;
+        const assignee = o.assignedTo;
+        const assignedName = assignee
+          ? [assignee.firstName, assignee.lastName]
+              .filter(Boolean)
+              .join(' ')
+              .trim() || assignee.email
+          : null;
         return {
           id: o.id,
           orderNumber: o.orderNumber,
           status: o.status,
           type: o.type,
+          fulfillment: o.fulfillment,
           total: d(o.total),
           paymentStatus: o.paymentStatus,
           updatedAt: o.updatedAt,
@@ -265,6 +349,7 @@ export class OrdersService {
           headlineItemQty: head?.quantity ?? null,
           itemCount: o._count.items,
           staffName,
+          assignedToName: assignedName,
         };
       }),
     };
@@ -275,17 +360,24 @@ export class OrdersService {
     const limit = Math.min(100, Math.max(1, q.limit ?? 20));
     const skip = (page - 1) * limit;
 
+    const dateFilter: Prisma.DateTimeFilter | undefined = q.range
+      ? this.createdAtPreset(q.range)
+      : q.dateFrom || q.dateTo
+        ? {
+            ...(q.dateFrom ? { gte: new Date(q.dateFrom) } : {}),
+            ...(q.dateTo ? { lte: new Date(q.dateTo) } : {}),
+          }
+        : undefined;
+
     const where: Prisma.OrderWhereInput = {
       ...(q.status ? { status: q.status } : {}),
       ...(q.type ? { type: q.type } : {}),
-      ...(q.dateFrom || q.dateTo
-        ? {
-            createdAt: {
-              ...(q.dateFrom ? { gte: new Date(q.dateFrom) } : {}),
-              ...(q.dateTo ? { lte: new Date(q.dateTo) } : {}),
-            },
-          }
+      ...(dateFilter ? { createdAt: dateFilter } : {}),
+      ...(q.fulfillment !== undefined
+        ? { fulfillment: q.fulfillment }
         : {}),
+      ...(q.paymentStatus ? { paymentStatus: q.paymentStatus } : {}),
+      ...(q.paymentMethod ? { paymentMethod: q.paymentMethod } : {}),
       ...(q.search?.trim()
         ? {
             OR: [
@@ -306,17 +398,22 @@ export class OrdersService {
         : {}),
     };
 
+    const sortField = q.sortBy ?? 'createdAt';
+
     const [total, rows] = await Promise.all([
       this.prisma.order.count({ where }),
       this.prisma.order.findMany({
         where,
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { [sortField]: 'desc' },
         include: {
           items: true,
           seatedAtTable: true,
           createdBy: {
+            select: { id: true, firstName: true, lastName: true, email: true },
+          },
+          assignedTo: {
             select: { id: true, firstName: true, lastName: true, email: true },
           },
         },
@@ -340,6 +437,9 @@ export class OrdersService {
         createdBy: {
           select: { id: true, firstName: true, lastName: true, email: true },
         },
+        assignedTo: {
+          select: { id: true, firstName: true, lastName: true, email: true },
+        },
       },
     });
     if (!o) throw new NotFoundException('Order not found');
@@ -347,6 +447,10 @@ export class OrdersService {
   }
 
   async create(actorId: string, dto: CreateOrderDto) {
+    if (dto.assignedToId) {
+      await this.assertActiveStaffUser(dto.assignedToId);
+    }
+
     if (dto.type === OrderType.DINE_IN && dto.tableId) {
       await this.assertTableAvailableForSeat(dto.tableId);
     } else if (dto.tableId && dto.type !== OrderType.DINE_IN) {
@@ -379,6 +483,7 @@ export class OrdersService {
           status,
           type: dto.type,
           fulfillment: dto.fulfillment ?? null,
+          assignedToId: dto.assignedToId ?? null,
           tableId: dto.type === OrderType.DINE_IN ? (dto.tableId ?? null) : null,
           customerName: dto.customerName ?? null,
           customerPhone: dto.customerPhone ?? null,
@@ -433,7 +538,7 @@ export class OrdersService {
   private async assertTableAvailableForSeat(tableId: string) {
     const t = await this.prisma.dineTable.findUnique({ where: { id: tableId } });
     if (!t) throw new NotFoundException('Table not found');
-    if (t.status === TableStatus.OCCUPIED && t.activeOrderId) {
+    if (t.activeOrderId) {
       throw new ConflictException('Table already has an active order.');
     }
   }
@@ -445,6 +550,12 @@ export class OrdersService {
       where: { id },
       include: { items: true },
     });
+
+    this.assertOrderEditable(existing.status);
+
+    if (dto.assignedToId) {
+      await this.assertActiveStaffUser(dto.assignedToId);
+    }
 
     const nextTableId =
       dto.tableId !== undefined ? dto.tableId : existing.tableId;
@@ -496,12 +607,27 @@ export class OrdersService {
       total = t2.total;
     }
 
+    const priceAffecting =
+      Boolean(dto.items?.length) || dto.deliveryFee !== undefined;
+    let tenderPatch: { amountTendered: string; changeDue: string } | undefined;
+    if (dto.amountTendered !== undefined) {
+      tenderPatch = this.tenderDecimals(dto.amountTendered, total);
+    } else if (priceAffecting && existing.amountTendered != null) {
+      tenderPatch = this.tenderDecimals(
+        d(existing.amountTendered),
+        total,
+      );
+    }
+
     await this.prisma.$transaction(async (tx) => {
       await tx.order.update({
         where: { id },
         data: {
           ...(dto.fulfillment !== undefined
             ? { fulfillment: dto.fulfillment }
+            : {}),
+          ...(dto.assignedToId !== undefined
+            ? { assignedToId: dto.assignedToId }
             : {}),
           ...(dto.tableId !== undefined
             ? { tableId: dto.tableId ?? null }
@@ -542,6 +668,7 @@ export class OrdersService {
                   total: total.toFixed(2),
                 }
               : {}),
+          ...(tenderPatch ?? {}),
         },
       });
 
@@ -589,21 +716,37 @@ export class OrdersService {
     id: string,
     dto: PatchOrderStatusDto,
   ) {
-    await this.requireOrder(id);
+    const existing = await this.prisma.order.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Order not found');
+    this.assertOrderEditable(existing.status);
+
+    const orderTotal = new DecimalPkg(existing.total.toString());
+    const tenderPatch =
+      dto.amountTendered !== undefined
+        ? this.tenderDecimals(dto.amountTendered, orderTotal)
+        : undefined;
+
+    let paymentStatus = dto.paymentStatus;
+    if (
+      dto.status === OrderStatus.COMPLETED &&
+      paymentStatus === undefined &&
+      existing.paymentStatus !== PaymentStatus.REFUNDED
+    ) {
+      paymentStatus = PaymentStatus.PAID;
+    }
 
     await this.prisma.order.update({
       where: { id },
       data: {
         status: dto.status,
-        ...(dto.paymentStatus !== undefined
-          ? { paymentStatus: dto.paymentStatus }
-          : {}),
+        ...(paymentStatus !== undefined ? { paymentStatus } : {}),
         ...(dto.paymentMethod !== undefined
           ? { paymentMethod: dto.paymentMethod }
           : {}),
         ...(dto.paymentLast4 !== undefined
           ? { paymentLast4: dto.paymentLast4 }
           : {}),
+        ...(tenderPatch ?? {}),
         ...(dto.status === OrderStatus.COMPLETED
           ? { completedAt: new Date() }
           : {}),
@@ -622,6 +765,27 @@ export class OrdersService {
     }
 
     return this.findOne(id);
+  }
+
+  /** Drop an unpaid cart / held ticket (“Clear” on order builder). */
+  async remove(id: string) {
+    const o = await this.prisma.order.findUnique({ where: { id } });
+    if (!o) throw new NotFoundException('Order not found');
+    if (o.status !== OrderStatus.DRAFT && o.status !== OrderStatus.HELD) {
+      throw new ConflictException(
+        'Only DRAFT or HELD orders can be discarded from the POS.',
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.dineTable.updateMany({
+        where: { activeOrderId: id },
+        data: { activeOrderId: null, status: TableStatus.FREE },
+      });
+      await tx.order.delete({ where: { id } });
+    });
+
+    return { ok: true, id };
   }
 
   private async releaseTableForOrder(orderId: string) {
@@ -658,12 +822,12 @@ export class OrdersService {
       label: t.label,
       capacity: t.capacity,
       status: t.status,
-        activeOrder: t.activeOrder
-          ? {
-              ...t.activeOrder,
-              total: d(t.activeOrder.total),
-            }
-          : null,
+      activeOrder: t.activeOrder
+        ? {
+            ...t.activeOrder,
+            total: d(t.activeOrder.total),
+          }
+        : null,
     }));
   }
 
@@ -706,6 +870,7 @@ export class OrdersService {
     status: OrderStatus;
     type: OrderType;
     fulfillment: FulfillmentMethod | null;
+    assignedToId: string | null;
     tableId: string | null;
     customerName: string | null;
     customerPhone: string | null;
@@ -719,6 +884,8 @@ export class OrdersService {
     paymentMethod: PaymentMethod | null;
     paymentLast4: string | null;
     paymentStatus: PaymentStatus;
+    amountTendered: unknown | null;
+    changeDue: unknown | null;
     completedAt: Date | null;
     cancelledAt: Date | null;
     createdAt: Date;
@@ -746,6 +913,12 @@ export class OrdersService {
       lastName: string;
       email: string;
     };
+    assignedTo?: {
+      id: string;
+      firstName: string;
+      lastName: string;
+      email: string;
+    } | null;
   }) {
     return {
       id: o.id,
@@ -753,6 +926,7 @@ export class OrdersService {
       status: o.status,
       type: o.type,
       fulfillment: o.fulfillment,
+      assignedToId: o.assignedToId,
       tableId: o.tableId,
       table: o.seatedAtTable
         ? {
@@ -774,11 +948,22 @@ export class OrdersService {
       paymentMethod: o.paymentMethod,
       paymentLast4: o.paymentLast4,
       paymentStatus: o.paymentStatus,
+      amountTendered:
+        o.amountTendered != null ? d(o.amountTendered) : null,
+      changeDue: o.changeDue != null ? d(o.changeDue) : null,
       completedAt: o.completedAt,
       cancelledAt: o.cancelledAt,
       createdAt: o.createdAt,
       updatedAt: o.updatedAt,
       createdBy: o.createdBy,
+      assignedTo: o.assignedTo
+        ? {
+            id: o.assignedTo.id,
+            firstName: o.assignedTo.firstName,
+            lastName: o.assignedTo.lastName,
+            email: o.assignedTo.email,
+          }
+        : null,
       items: (o.items ?? []).map((it) => ({
         id: it.id,
         productId: it.productId,

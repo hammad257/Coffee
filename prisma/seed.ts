@@ -264,16 +264,27 @@ async function main() {
 async function seedCatalogAndTables() {
   const coffee = await prisma.productCategory.upsert({
     where: { slug: 'coffee' },
-    create: { name: 'Coffee', slug: 'coffee', sortOrder: 10 },
+    create: {
+      name: 'Coffee',
+      slug: 'coffee',
+      sortOrder: 10,
+      isActive: true,
+    },
     update: { name: 'Coffee' },
   });
   const snacks = await prisma.productCategory.upsert({
     where: { slug: 'snacks' },
-    create: { name: 'Snacks', slug: 'snacks', sortOrder: 20 },
+    create: {
+      name: 'Snacks',
+      slug: 'snacks',
+      sortOrder: 20,
+      isActive: true,
+    },
     update: {},
   });
 
   const demo: {
+    sku: string;
     name: string;
     price: string;
     categoryId: string;
@@ -281,24 +292,28 @@ async function seedCatalogAndTables() {
     outOfStock?: boolean;
   }[] = [
     {
+      sku: 'MENU-FW-001',
       name: 'Flat White',
       price: '4.50',
       categoryId: coffee.id,
       description: 'Creamy microfoam',
     },
     {
+      sku: 'MENU-ESP-002',
       name: 'Espresso',
       price: '3.25',
       categoryId: coffee.id,
       description: 'Double shot',
     },
     {
+      sku: 'MENU-CM-003',
       name: 'Caramel Macchiato',
       price: '5.50',
       categoryId: coffee.id,
       description: 'Sweet & cold',
     },
     {
+      sku: 'MENU-CB-004',
       name: 'Cold Brew',
       price: '4.75',
       categoryId: coffee.id,
@@ -306,6 +321,7 @@ async function seedCatalogAndTables() {
       outOfStock: true,
     },
     {
+      sku: 'MENU-CR-005',
       name: 'Butter Croissant',
       price: '3.50',
       categoryId: snacks.id,
@@ -320,6 +336,7 @@ async function seedCatalogAndTables() {
     if (existing) continue;
     await prisma.product.create({
       data: {
+        sku: p.sku,
         categoryId: p.categoryId,
         name: p.name,
         description: p.description ?? null,

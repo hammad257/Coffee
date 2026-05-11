@@ -13,6 +13,8 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CatalogService } from './catalog.service';
 import {
+  BulkDeleteProductsDto,
+  BulkProductsDto,
   CreateProductDto,
   ListProductsQueryDto,
   UpdateProductDto,
@@ -28,11 +30,14 @@ import {
 export class ProductsController {
   constructor(private readonly catalog: CatalogService) {}
 
-  @Get()
+  @Get('export')
   @Permissions('coffee.product.read')
-  @ApiOperation({ summary: 'List products (paginated)' })
-  list(@Query() q: ListProductsQueryDto) {
-    return this.catalog.listProducts(q);
+  @ApiOperation({
+    summary:
+      'CSV export (same filters as list — returns filename + csv in wrapped JSON body)',
+  })
+  exportCsv(@Query() q: ListProductsQueryDto) {
+    return this.catalog.exportProductsCsv(q);
   }
 
   /** Register before :id */
@@ -56,18 +61,45 @@ export class ProductsController {
     return this.catalog.stockAlerts(q);
   }
 
+  @Patch('bulk')
+  @Permissions('coffee.product.update')
+  @ApiOperation({ summary: 'Bulk activate/deactivate or draft flag' })
+  bulk(@Body() dto: BulkProductsDto) {
+    return this.catalog.bulkProducts(dto);
+  }
+
+  @Post('bulk-delete')
+  @Permissions('coffee.product.delete')
+  @ApiOperation({ summary: 'Bulk delete products by id' })
+  bulkDelete(@Body() dto: BulkDeleteProductsDto) {
+    return this.catalog.bulkDeleteProducts(dto);
+  }
+
+  @Get()
+  @Permissions('coffee.product.read')
+  @ApiOperation({
+    summary:
+      'List products — filters: stockStatus, price range, SKU/name search, sort, publishedOnly for POS',
+  })
+  list(@Query() q: ListProductsQueryDto) {
+    return this.catalog.listProducts(q);
+  }
+
+  @Post()
+  @Permissions('coffee.product.create')
+  @ApiOperation({
+    summary:
+      'Create product — SKU, cost, variants/add-ons JSON, isDraft for Save draft, publish with isDraft:false',
+  })
+  create(@Body() dto: CreateProductDto) {
+    return this.catalog.createProduct(dto);
+  }
+
   @Get(':id')
   @Permissions('coffee.product.read')
   @ApiOperation({ summary: 'Product detail' })
   getOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.catalog.getProduct(id);
-  }
-
-  @Post()
-  @Permissions('coffee.product.create')
-  @ApiOperation({ summary: 'Create product' })
-  create(@Body() dto: CreateProductDto) {
-    return this.catalog.createProduct(dto);
   }
 
   @Patch(':id')
