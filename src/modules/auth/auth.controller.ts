@@ -13,12 +13,23 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import type { AuthUser } from '../../common/types';
 import { AuthService } from './auth.service';
-import { LoginDto, LogoutDto, RefreshDto } from './dto/auth.dto';
+import { LoginDto, LogoutDto, RefreshDto, SignupDto } from './dto/auth.dto';
 
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
+
+  @Public()
+  @Post('signup')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary:
+      'Register with POS role (ADMIN / MANAGER / BARISTA / CASHIER)',
+  })
+  async signup(@Body() dto: SignupDto, @Req() req: Request) {
+    return this.auth.signup(dto, req);
+  }
 
   @Public()
   @Post('login')

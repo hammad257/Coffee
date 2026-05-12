@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -43,7 +44,7 @@ export class OrdersController {
   @Permissions('coffee.stats.read')
   @ApiOperation({
     summary:
-      'Dashboard: recent orders (by last update) with headline line item and counts',
+      'Dashboard: recent orders by last update — filter by lane (type/fulfillment) or pipeline-only (activeOnly)',
   })
   recentDashboard(@Query() q: RecentOrdersQueryDto) {
     return this.orders.recentDashboardOrders(q);
@@ -51,14 +52,20 @@ export class OrdersController {
 
   @Get()
   @Permissions('coffee.order.read')
-  @ApiOperation({ summary: 'List orders with filters' })
+  @ApiOperation({
+    summary:
+      'List orders — supports status/type, payment filters, search, date range or preset (today/week/month), sortBy updatedAt',
+  })
   list(@Query() q: ListOrdersQueryDto) {
     return this.orders.list(q);
   }
 
   @Post()
   @Permissions('coffee.order.create')
-  @ApiOperation({ summary: 'Create order (POS checkout / manual)' })
+  @ApiOperation({
+    summary:
+      'Create order — set status HELD/DRAFT for hold/clear flow, assignedToId + tableId for dashboards',
+  })
   create(@CurrentUser() actor: AuthUser, @Body() dto: CreateOrderDto) {
     return this.orders.create(actor.id, dto);
   }
@@ -83,11 +90,24 @@ export class OrdersController {
 
   @Patch(':id/status')
   @Permissions('coffee.order.update_status')
-  @ApiOperation({ summary: 'Workflow transition (NEW → PREPARING → READY → …)' })
+  @ApiOperation({
+    summary:
+      'Workflow — includes SERVED (dine-in served at table); Pay Now sends COMPLETED (+ optional amountTendered for cash tender/change)',
+  })
   patchStatus(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: PatchOrderStatusDto,
   ) {
     return this.orders.patchStatus(id, dto);
+  }
+
+  @Delete(':id')
+  @Permissions('coffee.order.delete')
+  @ApiOperation({
+    summary:
+      'Delete DRAFT or HELD order only ("Clear") — frees linked dine-in table',
+  })
+  remove(@Param('id', ParseUUIDPipe) id: string) {
+    return this.orders.remove(id);
   }
 }

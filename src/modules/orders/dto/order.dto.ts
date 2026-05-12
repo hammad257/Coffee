@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsEnum,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -59,7 +60,11 @@ export class CreateOrderDto {
   @IsEnum(OrderType)
   type: OrderType;
 
-  @ApiPropertyOptional({ enum: OrderStatus, description: 'Defaults to NEW' })
+  @ApiPropertyOptional({
+    enum: OrderStatus,
+    description:
+      'NEW for normal checkout — use HELD while customer browses (“Hold”), DRAFT for saved carts',
+  })
   @IsOptional()
   @IsEnum(OrderStatus)
   status?: OrderStatus;
@@ -68,6 +73,12 @@ export class CreateOrderDto {
   @IsOptional()
   @IsEnum(FulfillmentMethod)
   fulfillment?: FulfillmentMethod;
+
+  /** Floor / runner assignment (shows on checkout & detail views). */
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  assignedToId?: string;
 
   @ApiPropertyOptional({ description: 'Dine-in table id' })
   @IsOptional()
@@ -175,6 +186,42 @@ export class ListOrdersQueryDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @ApiPropertyOptional({
+    enum: FulfillmentMethod,
+    description:
+      'Filter POS lanes (dashboard “Type” picker: Counter Pickup, Delivery, …)',
+  })
+  @IsOptional()
+  @IsEnum(FulfillmentMethod)
+  fulfillment?: FulfillmentMethod;
+
+  @ApiPropertyOptional({ enum: PaymentStatus })
+  @IsOptional()
+  @IsEnum(PaymentStatus)
+  paymentStatus?: PaymentStatus;
+
+  @ApiPropertyOptional({ enum: PaymentMethod })
+  @IsOptional()
+  @IsEnum(PaymentMethod)
+  paymentMethod?: PaymentMethod;
+
+  @ApiPropertyOptional({
+    enum: ['today', 'week', 'month'],
+    description: 'Shortcuts for dashboard filters — when set, overrides dateFrom/dateTo',
+  })
+  @IsOptional()
+  @IsIn(['today', 'week', 'month'])
+  range?: 'today' | 'week' | 'month';
+
+  @ApiPropertyOptional({
+    enum: ['createdAt', 'updatedAt'],
+    description:
+      'Sort field — dashboards often want recently touched orders (updatedAt)',
+  })
+  @IsOptional()
+  @IsIn(['createdAt', 'updatedAt'])
+  sortBy?: 'createdAt' | 'updatedAt';
 }
 
 export class PatchOrderStatusDto {
@@ -197,6 +244,16 @@ export class PatchOrderStatusDto {
   @IsString()
   @MaxLength(4)
   paymentLast4?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Cash keypad “tender” — persists change due alongside Pay Now → COMPLETED',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  amountTendered?: number;
 }
 
 export class UpdateOrderDto {
@@ -204,6 +261,11 @@ export class UpdateOrderDto {
   @IsOptional()
   @IsEnum(FulfillmentMethod)
   fulfillment?: FulfillmentMethod;
+
+  @ApiPropertyOptional({ description: 'null clears assignment', nullable: true })
+  @IsOptional()
+  @IsUUID()
+  assignedToId?: string | null;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -263,6 +325,15 @@ export class UpdateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => CreateOrderItemLineDto)
   items?: CreateOrderItemLineDto[];
+
+  @ApiPropertyOptional({
+    description: 'Overwrite tender + recalc change vs current order total',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  amountTendered?: number;
 }
 
 export class CreateTableDto {

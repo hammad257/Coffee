@@ -50,6 +50,17 @@ async function bootstrap() {
     }),
   );
 
+  app.use(
+    '/api/v1/auth/signup',
+    rateLimit({
+      windowMs: 60_000,
+      max: 10,
+      standardHeaders: true,
+      legacyHeaders: false,
+      message: 'Too many signup attempts. Try again later.',
+    }),
+  );
+
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Coffee Shop POS API')
     .setDescription('Élite de Paris — backend API')
