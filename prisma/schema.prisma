@@ -202,6 +202,8 @@ model Order {
   total            Decimal              @db.Decimal(12, 2)
   paymentMethod    PaymentMethod?       @map("payment_method")
   paymentLast4     String?              @map("payment_last4")
+  /// Latest Stripe PaymentIntent id for ONLINE card flows (verify webhooks against this row).
+  stripePaymentIntentId String?         @unique @map("stripe_payment_intent_id")
   paymentStatus    PaymentStatus        @default(PENDING) @map("payment_status")
   /// Cash / in-person tenders (success screen shows tendered vs change due).
   amountTendered   Decimal?             @map("amount_tendered") @db.Decimal(12, 2)
