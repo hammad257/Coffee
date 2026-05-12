@@ -1,4 +1,6 @@
 import {
+  BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   UnauthorizedException,
@@ -16,7 +18,7 @@ import {
 } from '../../common/types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { parseDurationToMs } from './time.util';
-import type { LoginDto } from './dto/auth.dto';
+import type { LoginDto, SignupDto } from './dto/auth.dto';
 
 const userAuthInclude = {
   userRoles: {
@@ -134,6 +136,110 @@ export class AuthService {
 
     const ok = await argon2.verify(user.passwordHash, dto.password);
     if (!ok) throw invalid();
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    });
+
+    const accessToken = this.signAccessTokenFromDbUser(user);
+    const refreshToken = await this.issueRefreshToken(
+      user,
+      dto.rememberMe ?? false,
+      req,
+    );
+
+    return {
+      accessToken,
+      refreshToken,
+      user: this.toAuthUser(user),
+    };
+  }
+
+  /**
+   * Self-service registration for POS roles. Roles listed in `SIGNUP_REQUIRE_APPROVAL_FOR`
+   * (default ADMIN,MANAGER) get `PENDING` until an admin activates the account.
+   */
+  async signup(dto: SignupDto, req: Request) {
+    const disabled =
+      this.config.get<string>('SIGNUP_ENABLED')?.toLowerCase() === 'false';
+    if (disabled) {
+      throw new ForbiddenException('Self-service signup is disabled.');
+    }
+
+    const roleCode = dto.roleCode;
+
+    const approvalCsv =
+      this.config.get<string>('SIGNUP_REQUIRE_APPROVAL_FOR') ??
+      'ADMIN,MANAGER';
+    const pendingCodes = new Set(
+      approvalCsv
+        .split(',')
+        .map((s) => s.trim().toUpperCase())
+        .filter(Boolean),
+    );
+    const status = pendingCodes.has(roleCode)
+      ? UserStatus.PENDING
+      : UserStatus.ACTIVE;
+
+    const role = await this.prisma.role.findUnique({
+      where: { code: roleCode },
+      select: { id: true, code: true },
+    });
+    if (!role) {
+      throw new BadRequestException(
+        `Role "${roleCode}" is not available. Run DB seed so ADMIN, MANAGER, BARISTA, and CASHIER exist.`,
+      );
+    }
+
+    const dup = await this.prisma.user.findFirst({
+      where: {
+        email: { equals: dto.email, mode: 'insensitive' },
+        deletedAt: null,
+      },
+      select: { id: true },
+    });
+    if (dup) {
+      throw new ConflictException('Email already registered.');
+    }
+
+    const passwordHash = await argon2.hash(dto.password, {
+      type: argon2.argon2id,
+      memoryCost: 19456,
+      timeCost: 2,
+      parallelism: 1,
+    });
+
+    const user = await this.prisma.user.create({
+      data: {
+        email: dto.email.trim().toLowerCase(),
+        passwordHash,
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+        status,
+        createdById: null,
+        userRoles: {
+          create: [{ roleId: role.id }],
+        },
+      },
+      include: userAuthInclude,
+    });
+
+    if (status === UserStatus.PENDING) {
+      return {
+        pendingActivation: true,
+        message:
+          'Account created. An administrator must activate your account before you can sign in.',
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          status: user.status,
+          roleCodes: [role.code],
+        },
+      };
+    }
 
     await this.prisma.user.update({
       where: { id: user.id },
