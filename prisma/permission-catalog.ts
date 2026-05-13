@@ -42,6 +42,7 @@ const PERMISSION_GROUPS: { module: string; resources: ResourceMap }[] = [
       category: [...STANDARD_ACTIONS],
       table: ['read', 'create', 'update', 'delete'],
       stats: ['read'],
+      settings: ['read', 'update'],
     },
   },
 ];

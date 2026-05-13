@@ -1,10 +1,12 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { OrderStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { LocalFilesService } from '../../common/upload/local-files.service';
 import {
   BulkCategoriesDto,
   BulkDeleteCategoriesDto,
@@ -22,6 +24,7 @@ import type {
   StockAlertsQueryDto,
   TopSellingProductsQueryDto,
 } from './dto/dashboard.dto';
+import type { Express } from 'express';
 import D from 'decimal.js';
 
 function money(v: unknown): number {
@@ -35,7 +38,10 @@ function skuCsvEscape(s: string): string {
 
 @Injectable()
 export class CatalogService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly localFiles: LocalFilesService,
+  ) {}
 
   private slugifyName(name: string): string {
     return name
@@ -80,7 +86,7 @@ export class CatalogService {
       name: c.name,
       slug: c.slug,
       description: c.description,
-      imageUrl: c.imageUrl,
+      imageUrl: this.localFiles.toAbsoluteAssetUrl(c.imageUrl),
       isActive: c.isActive,
       sortOrder: c.sortOrder,
       productCount: c._count.products,
@@ -94,7 +100,7 @@ export class CatalogService {
       dto.slug?.trim().toLowerCase() ??
       (await this.generateUniqueCategorySlug(dto.name));
     try {
-      return await this.prisma.productCategory.create({
+      const cat = await this.prisma.productCategory.create({
         data: {
           name: dto.name,
           slug,
@@ -104,6 +110,10 @@ export class CatalogService {
           sortOrder: dto.sortOrder ?? 0,
         },
       });
+      return {
+        ...cat,
+        imageUrl: this.localFiles.toAbsoluteAssetUrl(cat.imageUrl),
+      };
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         throw new ConflictException('Category slug already exists.');
@@ -115,7 +125,7 @@ export class CatalogService {
   async updateCategory(id: string, dto: UpdateCategoryDto) {
     await this.requireCategory(id);
     try {
-      return await this.prisma.productCategory.update({
+      const cat = await this.prisma.productCategory.update({
         where: { id },
         data: {
           ...(dto.name !== undefined ? { name: dto.name } : {}),
@@ -128,6 +138,10 @@ export class CatalogService {
           ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
         },
       });
+      return {
+        ...cat,
+        imageUrl: this.localFiles.toAbsoluteAssetUrl(cat.imageUrl),
+      };
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         throw new ConflictException('Category slug already exists.');
@@ -139,7 +153,7 @@ export class CatalogService {
   async removeCategory(id: string) {
     const cat = await this.prisma.productCategory.findUnique({
       where: { id },
-      select: { id: true, name: true },
+      select: { id: true, name: true, imageUrl: true },
     });
     if (!cat) throw new NotFoundException('Category not found');
 
@@ -149,6 +163,7 @@ export class CatalogService {
         `Cannot delete category '${cat.name}' because it contains ${inUse} product(s). Move or delete those products first.`,
       );
     }
+    this.localFiles.removeManagedFile(cat.imageUrl);
     await this.prisma.productCategory.delete({ where: { id } });
     return { ok: true };
   }
@@ -416,8 +431,53 @@ export class CatalogService {
     return this.serializeProduct(p);
   }
 
-  async removeProduct(id: string) {
+  async updateProductImage(id: string, file: Express.Multer.File | undefined) {
+    if (!file) {
+      throw new BadRequestException(
+        'Image file is required (multipart field name: file).',
+      );
+    }
     await this.requireProduct(id);
+    const prev = await this.prisma.product.findUnique({
+      where: { id },
+      select: { imageUrl: true },
+    });
+    this.localFiles.removeManagedFile(prev?.imageUrl);
+    const publicPath = this.localFiles.publicPath('products', file.filename);
+    const p = await this.prisma.product.update({
+      where: { id },
+      data: { imageUrl: publicPath },
+      include: { category: true },
+    });
+    return this.serializeProduct(p);
+  }
+
+  async updateCategoryImage(id: string, file: Express.Multer.File | undefined) {
+    if (!file) {
+      throw new BadRequestException(
+        'Image file is required (multipart field name: file).',
+      );
+    }
+    await this.requireCategory(id);
+    const prev = await this.prisma.productCategory.findUnique({
+      where: { id },
+      select: { imageUrl: true },
+    });
+    this.localFiles.removeManagedFile(prev?.imageUrl);
+    const publicPath = this.localFiles.publicPath('categories', file.filename);
+    await this.prisma.productCategory.update({
+      where: { id },
+      data: { imageUrl: publicPath },
+    });
+    const rows = await this.listCategories();
+    const row = rows.find((r) => r.id === id);
+    if (!row) throw new NotFoundException('Category not found');
+    return row;
+  }
+
+  async removeProduct(id: string) {
+    const p = await this.requireProduct(id);
+    this.localFiles.removeManagedFile(p.imageUrl);
     await this.prisma.product.delete({ where: { id } });
     return { ok: true };
   }
@@ -494,7 +554,7 @@ export class CatalogService {
       description: p.description,
       price: money(p.price),
       costPrice: money(p.costPrice),
-      imageUrl: p.imageUrl,
+      imageUrl: this.localFiles.toAbsoluteAssetUrl(p.imageUrl),
       outOfStock: p.outOfStock,
       stockQuantity: p.stockQuantity,
       lowStockThreshold: p.lowStockThreshold,
@@ -506,7 +566,10 @@ export class CatalogService {
       addons,
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
-      category: p.category,
+      category: {
+        ...p.category,
+        imageUrl: this.localFiles.toAbsoluteAssetUrl(p.category.imageUrl),
+      },
     };
   }
 
@@ -578,7 +641,7 @@ export class CatalogService {
       merged.push({
         productId: g.productId,
         name: pr?.name ?? '(Removed)',
-        imageUrl: pr?.imageUrl ?? null,
+        imageUrl: this.localFiles.toAbsoluteAssetUrl(pr?.imageUrl ?? null),
         unitsSold: g._sum.quantity ?? 0,
         revenue: money(g._sum.lineTotal ?? 0),
       });
@@ -611,6 +674,14 @@ export class CatalogService {
 
   async stockAlerts(q: StockAlertsQueryDto) {
     const limit = Math.min(50, Math.max(1, q.limit ?? 20));
+
+    const store = await this.prisma.storeSettings.findUnique({
+      where: { id: 'default' },
+      select: { lowStockAlertsEnabled: true },
+    });
+    if (store && !store.lowStockAlertsEnabled) {
+      return { requestedLimit: limit, returned: 0, items: [] };
+    }
 
     const active = await this.prisma.product.findMany({
       where: { isActive: true, isDraft: false },
@@ -649,7 +720,7 @@ export class CatalogService {
         alerts.push({
           productId: p.id,
           name: p.name,
-          imageUrl: p.imageUrl,
+          imageUrl: this.localFiles.toAbsoluteAssetUrl(p.imageUrl),
           stockQuantity: p.stockQuantity,
           lowStockThreshold: p.lowStockThreshold,
           severity: 'OUT_OF_STOCK',
@@ -659,7 +730,7 @@ export class CatalogService {
         alerts.push({
           productId: p.id,
           name: p.name,
-          imageUrl: p.imageUrl,
+          imageUrl: this.localFiles.toAbsoluteAssetUrl(p.imageUrl),
           stockQuantity: p.stockQuantity,
           lowStockThreshold: p.lowStockThreshold,
           severity: 'LOW_STOCK',

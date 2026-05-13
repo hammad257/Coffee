@@ -4,6 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { SessionInvalidationModule } from './common/modules/session-invalidation.module';
+import { UploadModule } from './common/upload/upload.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -12,7 +13,9 @@ import { CatalogModule } from './modules/catalog/catalog.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { PermissionsModule } from './modules/permissions/permissions.module';
+import { ProfileModule } from './modules/profile/profile.module';
 import { RolesModule } from './modules/roles/roles.module';
+import { SettingsModule } from './modules/settings/settings.module';
 import { UsersModule } from './modules/users/users.module';
 import { PrismaModule } from './prisma/prisma.module';
 
@@ -24,6 +27,7 @@ import { PrismaModule } from './prisma/prisma.module';
       envFilePath: ['.env.local', '.env'],
     }),
     PrismaModule,
+    UploadModule,
     SessionInvalidationModule,
     AuthModule,
     UsersModule,
@@ -32,6 +36,8 @@ import { PrismaModule } from './prisma/prisma.module';
     CatalogModule,
     OrdersModule,
     PaymentsModule,
+    ProfileModule,
+    SettingsModule,
   ],
   controllers: [AppController],
   providers: [

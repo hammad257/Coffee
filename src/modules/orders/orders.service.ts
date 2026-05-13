@@ -57,6 +57,24 @@ export class OrdersService {
     this.defaultTaxRate = new DecimalPkg(raw ?? '0.08');
   }
 
+  /** Uses Store settings when order DTO omits taxRate; falls back to DEFAULT_TAX_RATE env. */
+  private async resolveEffectiveTaxRate(
+    explicitTax?: number,
+  ): Promise<Dec> {
+    if (explicitTax !== undefined) return new DecimalPkg(explicitTax);
+    try {
+      const s = await this.prisma.storeSettings.findUnique({
+        where: { id: 'default' },
+        select: { taxEnabled: true, taxRate: true },
+      });
+      if (s && !s.taxEnabled) return new DecimalPkg(0);
+      if (s?.taxRate != null) return new DecimalPkg(String(s.taxRate));
+    } catch {
+      //
+    }
+    return this.defaultTaxRate;
+  }
+
   private genOrderNumber(type: OrderType): string {
     const prefix =
       type === OrderType.DINE_IN
@@ -457,10 +475,7 @@ export class OrdersService {
       throw new ConflictException('tableId is only used for dine-in orders.');
     }
 
-    const taxRate =
-      dto.taxRate !== undefined
-        ? new DecimalPkg(dto.taxRate)
-        : this.defaultTaxRate;
+    const taxRate = await this.resolveEffectiveTaxRate(dto.taxRate);
     const deliveryFee = new DecimalPkg(dto.deliveryFee ?? 0);
 
     const lineInputs = dto.items.map((i) => ({
