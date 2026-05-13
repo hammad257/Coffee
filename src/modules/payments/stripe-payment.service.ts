@@ -143,16 +143,35 @@ export class StripePaymentService {
     };
   }
 
-  async handleStripeWebhook(rawBodyReq: RawBodyRequest<Request>) {
+  /** Express lowercases header names; value may be string or string[]. */
+  private getStripeSignature(req: RawBodyRequest<Request>): string | undefined {
+    const h = req.headers;
+    for (const [name, value] of Object.entries(h)) {
+      if (name.toLowerCase() === 'stripe-signature') {
+        if (typeof value === 'string') return value;
+        if (Array.isArray(value) && value[0]) return value[0];
+      }
+    }
+    return req.get('stripe-signature') ?? undefined;
+  }
+
+  async handleStripeWebhook(
+    rawBodyReq: RawBodyRequest<Request>,
+    signatureFromDecorator?: string,
+  ) {
     const whSecret = this.config.get<string>('STRIPE_WEBHOOK_SECRET')?.trim();
     if (!whSecret) {
       throw new ServiceUnavailableException(
         'STRIPE_WEBHOOK_SECRET is not set; cannot verify Stripe webhooks.',
       );
     }
-    const signature = rawBodyReq.headers['stripe-signature'];
-    if (typeof signature !== 'string') {
-      throw new BadRequestException('Missing Stripe-Signature header.');
+    const signature =
+      signatureFromDecorator?.trim() ||
+      this.getStripeSignature(rawBodyReq);
+    if (!signature) {
+      throw new BadRequestException(
+        'Missing Stripe-Signature header. If using Stripe CLI, use an explicit URL: `stripe listen --forward-to http://127.0.0.1:3000/api/v1/payments/stripe/webhook` then paste the printed `whsec_...` into STRIPE_WEBHOOK_SECRET. Avoid testing this route from the browser or Swagger (those requests have no signature).',
+      );
     }
     const raw = rawBodyReq.rawBody;
     if (!Buffer.isBuffer(raw)) {

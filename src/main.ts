@@ -33,8 +33,14 @@ async function bootstrap() {
 
   app.enableCors({
     origin: configService.get<string>('CORS_ORIGIN') ?? '*',
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-refresh-token'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    // Browsers / Swagger must be allowed to send this on cross-origin POSTs; Stripe CLI is unaffected.
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'x-refresh-token',
+      'stripe-signature',
+    ],
     credentials: true,
   });
 

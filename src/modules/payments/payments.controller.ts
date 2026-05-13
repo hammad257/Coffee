@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Post,
   Req,
 } from '@nestjs/common';
@@ -47,7 +48,15 @@ export class PaymentsController {
     summary:
       'Stripe webhook — verify STRIPE_WEBHOOK_SECRET signature; confirms payment_intent.succeeded',
   })
-  stripeWebhook(@Req() req: RawBodyRequest<Request>) {
-    return this.stripePayments.handleStripeWebhook(req);
+  stripeWebhook(
+    @Req() req: RawBodyRequest<Request>,
+    @Headers('stripe-signature') stripeSignatureFromDecorator?:
+      | string
+      | string[],
+  ) {
+    const sigFromDecorator = Array.isArray(stripeSignatureFromDecorator)
+      ? stripeSignatureFromDecorator[0]
+      : stripeSignatureFromDecorator;
+    return this.stripePayments.handleStripeWebhook(req, sigFromDecorator);
   }
 }
