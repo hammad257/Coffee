@@ -4,11 +4,14 @@ import {
   Injectable,
   NotFoundException,
   UnauthorizedException,
+  BadRequestException,
 } from '@nestjs/common';
-import { UserStatus, type Prisma } from '@prisma/client';
+import { UserStatus, UserActivityType, type Prisma } from '@prisma/client';
 import * as argon2 from 'argon2';
+import type { Express } from 'express';
 import type { AuthUser } from '../../common/types';
 import { SessionInvalidationService } from '../../common/services/session-invalidation.service';
+import { LocalFilesService } from '../../common/upload/local-files.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   AssignUserRolesDto,
@@ -29,6 +32,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly sessions: SessionInvalidationService,
+    private readonly localFiles: LocalFilesService,
   ) {}
 
   private async principalAdminRoleId(): Promise<string> {
@@ -200,6 +204,30 @@ export class UsersService {
     return this.serializeUserSummary(user);
   }
 
+  async updateProfilePhoto(
+    userId: string,
+    file: Express.Multer.File | undefined,
+    actorId: string,
+  ) {
+    if (!file) {
+      throw new BadRequestException(
+        'Image file is required (multipart field name: file).',
+      );
+    }
+    await this.requireUser(userId);
+    const prev = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { photoUrl: true },
+    });
+    this.localFiles.removeManagedFile(prev?.photoUrl);
+    const publicPath = this.localFiles.publicPath('users', file.filename);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { photoUrl: publicPath, updatedById: actorId },
+    });
+    return this.findOne(userId);
+  }
+
   async update(actorId: string, id: string, dto: UpdateUserDto) {
     const existing = await this.requireUser(id);
     if (
@@ -231,6 +259,21 @@ export class UsersService {
           ? { photoUrl: dto.photoUploadId || null }
           : {}),
         ...(dto.status !== undefined ? { status: dto.status } : {}),
+        ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
+        ...(dto.bio !== undefined ? { bio: dto.bio } : {}),
+        ...(dto.jobTitle !== undefined ? { jobTitle: dto.jobTitle } : {}),
+        ...(dto.workLocation !== undefined
+          ? { workLocation: dto.workLocation }
+          : {}),
+        ...(dto.notificationFrequency !== undefined
+          ? { notificationFrequency: dto.notificationFrequency }
+          : {}),
+        ...(dto.systemLanguage !== undefined
+          ? { systemLanguage: dto.systemLanguage }
+          : {}),
+        ...(dto.twoFactorEnabled !== undefined
+          ? { twoFactorEnabled: dto.twoFactorEnabled }
+          : {}),
         updatedById: actorId,
       },
     });
@@ -336,6 +379,14 @@ export class UsersService {
       },
     });
 
+    await this.prisma.userActivity.create({
+      data: {
+        userId: id,
+        activityType: UserActivityType.PASSWORD_CHANGED,
+        title: self ? 'Password changed' : 'Password reset by administrator',
+      },
+    });
+
     await this.sessions.invalidateUser(id);
     return { ok: true };
   }
@@ -390,7 +441,14 @@ export class UsersService {
       email: u.email,
       firstName: u.firstName,
       lastName: u.lastName,
-      photoUrl: u.photoUrl,
+      phone: u.phone,
+      bio: u.bio,
+      jobTitle: u.jobTitle,
+      workLocation: u.workLocation,
+      notificationFrequency: u.notificationFrequency,
+      systemLanguage: u.systemLanguage,
+      twoFactorEnabled: u.twoFactorEnabled,
+      photoUrl: this.localFiles.toAbsoluteAssetUrl(u.photoUrl),
       status: u.status,
       lastLoginAt: u.lastLoginAt,
       createdAt: u.createdAt,

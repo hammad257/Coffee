@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { UserStatus, type Prisma } from '@prisma/client';
+import { UserActivityType, UserStatus, type Prisma } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes } from 'crypto';
 import type { Request } from 'express';
@@ -142,6 +142,18 @@ export class AuthService {
       data: { lastLoginAt: new Date() },
     });
 
+    await this.prisma.userActivity.create({
+      data: {
+        userId: user.id,
+        activityType: UserActivityType.LOGIN,
+        title: 'Signed in',
+        detail: typeof req.ip === 'string' ? req.ip : undefined,
+        meta: {
+          userAgent: req.get('user-agent'),
+        },
+      },
+    });
+
     const accessToken = this.signAccessTokenFromDbUser(user);
     const refreshToken = await this.issueRefreshToken(
       user,
@@ -244,6 +256,18 @@ export class AuthService {
     await this.prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
+    });
+
+    await this.prisma.userActivity.create({
+      data: {
+        userId: user.id,
+        activityType: UserActivityType.LOGIN,
+        title: 'Signed in (signup)',
+        detail: typeof req.ip === 'string' ? req.ip : undefined,
+        meta: {
+          userAgent: req.get('user-agent'),
+        },
+      },
     });
 
     const accessToken = this.signAccessTokenFromDbUser(user);

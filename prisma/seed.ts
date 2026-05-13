@@ -132,7 +132,8 @@ async function main() {
           (p.resource === 'product' && p.action === 'read') ||
           (p.resource === 'category' && p.action === 'read') ||
           (p.resource === 'table' && p.action === 'read') ||
-          (p.resource === 'stats' && p.action === 'read'))),
+          (p.resource === 'stats' && p.action === 'read') ||
+          (p.resource === 'settings' && p.action === 'read'))),
   );
 
   // Cashier: checkout & register — all order/table/stats; catalog read-only; no product/category delete.
@@ -144,7 +145,8 @@ async function main() {
       (p.module === 'Coffee' &&
         !(
           (p.resource === 'product' && p.action === 'delete') ||
-          (p.resource === 'category' && p.action === 'delete')
+          (p.resource === 'category' && p.action === 'delete') ||
+          (p.resource === 'settings' && p.action === 'update')
         )),
   );
 

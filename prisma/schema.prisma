@@ -7,26 +7,36 @@ datasource db {
 }
 
 model User {
-  id               String         @id @default(uuid())
-  email            String         @unique
-  passwordHash     String         @map("password_hash")
-  firstName        String         @map("first_name")
-  lastName         String         @map("last_name")
-  status           UserStatus     @default(PENDING) @map("status")
-  twoFactorEnabled Boolean        @default(false) @map("two_factor_enabled")
-  lastLoginAt      DateTime?      @map("last_login_at")
+  id               String           @id @default(uuid())
+  email            String           @unique
+  passwordHash     String           @map("password_hash")
+  firstName        String           @map("first_name")
+  lastName         String           @map("last_name")
+  /// POS profile / roster (Settings & profile screens).
+  phone            String?          @db.VarChar(48)
+  bio              String?
+  jobTitle         String?          @map("job_title") @db.VarChar(120)
+  workLocation     String?          @map("work_location") @db.VarChar(160)
+  /// e.g. daily_digest, realtime, weekly, off
+  notificationFrequency String      @default("daily_digest") @map("notification_frequency") @db.VarChar(32)
+  /// UI locale tag, e.g. en-US
+  systemLanguage   String           @default("en-US") @map("system_language") @db.VarChar(24)
+  status           UserStatus       @default(PENDING) @map("status")
+  twoFactorEnabled Boolean          @default(false) @map("two_factor_enabled")
+  lastLoginAt      DateTime?        @map("last_login_at")
   /// Bumped on logout-everywhere / theft / admin RBAC changes → invalidates JWTs.
-  tokenVersion     Int            @default(0) @map("token_version")
-  createdAt        DateTime       @default(now()) @map("created_at")
-  updatedAt        DateTime       @updatedAt @map("updated_at")
-  createdById      String?        @map("created_by_id")
-  updatedById      String?        @map("updated_by_id")
-  deletedAt        DateTime?      @map("deleted_at")
-  photoUrl         String?        @map("photo_url")
+  tokenVersion     Int              @default(0) @map("token_version")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+  createdById      String?          @map("created_by_id")
+  updatedById      String?          @map("updated_by_id")
+  deletedAt        DateTime?        @map("deleted_at")
+  photoUrl         String?          @map("photo_url")
   refreshTokens    RefreshToken[]
   userRoles        UserRole[]
-  ordersCreated    Order[]        @relation("OrderCreatedBy")
-  ordersAssigned   Order[]        @relation("OrderAssignedTo")
+  activities       UserActivity[]
+  ordersCreated    Order[]          @relation("OrderCreatedBy")
+  ordersAssigned   Order[]          @relation("OrderAssignedTo")
 
   @@index([email])
   @@index([status])
@@ -103,6 +113,47 @@ model RolePermission {
   @@id([roleId, permissionId])
   @@index([permissionId])
   @@map("role_permissions")
+}
+
+// --- Store & profile (POS settings) ---
+
+model StoreSettings {
+  id                   String @id
+  storeName            String @default("Élite de Paris") @map("store_name") @db.VarChar(160)
+  address              String?
+  contactPhone         String? @map("contact_phone") @db.VarChar(48)
+  contactEmail         String? @map("contact_email") @db.VarChar(254)
+  storeLogoUrl         String? @map("store_logo_url") @db.VarChar(2048)
+  currencyCode         String @default("USD") @map("currency_code") @db.VarChar(12)
+  timezone             String @default("Asia/Kolkata") @db.VarChar(80)
+  taxEnabled           Boolean @default(true) @map("tax_enabled")
+  taxInclusive         Boolean @default(false) @map("tax_inclusive")
+  taxRate              Decimal @default(0.08) @map("tax_rate") @db.Decimal(7, 4)
+  paymentCashEnabled   Boolean @default(true) @map("payment_cash_enabled")
+  paymentCardEnabled   Boolean @default(true) @map("payment_card_enabled")
+  paymentOnlineEnabled Boolean @default(true) @map("payment_online_enabled")
+  lowStockAlertsEnabled Boolean @default(true) @map("low_stock_alerts_enabled")
+  orderSoundEnabled    Boolean @default(true) @map("order_sound_enabled")
+  autoPrintReceipts    Boolean @default(false) @map("auto_print_receipts")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  updatedById          String? @map("updated_by_id")
+
+  @@map("store_settings")
+}
+
+model UserActivity {
+  id           String           @id @default(uuid())
+  userId       String           @map("user_id")
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activityType UserActivityType @map("activity_type")
+  title        String           @db.VarChar(220)
+  detail       String?
+  meta         Json?
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("user_activities")
 }
 
 // --- POS catalog ---
@@ -292,4 +343,14 @@ enum TableStatus {
   FREE
   OCCUPIED
   RESERVED
+}
+
+enum UserActivityType {
+  LOGIN
+  PASSWORD_CHANGED
+  PROFILE_UPDATED
+  SETTINGS_UPDATED
+  STOCK_UPDATED
+  ORDER_ACTIVITY
+  OTHER
 }

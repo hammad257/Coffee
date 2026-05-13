@@ -10,9 +10,11 @@ import {
   Put,
   Query,
   ForbiddenException,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 import type { AuthUser } from '../../common/types';
@@ -27,6 +29,9 @@ import { UsersService } from './users.service';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
 import { PermissionsGuard } from 'src/common/guards/permissions.guard';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Express } from 'express';
+import { multerImageOptions } from '../../common/upload/multer-image.config';
 
 @ApiTags('Identity — Users')
 @ApiBearerAuth('access-token')
@@ -89,6 +94,36 @@ export class UsersController {
       throw new ForbiddenException('Not allowed to change this password.');
     }
     return this.users.updatePassword(actor, id, dto);
+  }
+
+  @Patch(':id/photo')
+  @UseInterceptors(FileInterceptor('file', multerImageOptions('users')))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiOperation({
+    summary:
+      'Upload profile picture — DB stores /uploads/users/…; API returns full URL using PUBLIC_BASE_URL',
+  })
+  uploadPhoto(
+    @CurrentUser() actor: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (
+      actor.id !== id &&
+      !actor.permissions?.includes('identity.user.update')
+    ) {
+      throw new ForbiddenException(
+        'You can only change your own photo unless you may update users.',
+      );
+    }
+    return this.users.updateProfilePhoto(id, file, actor.id);
   }
 
   @Get(':id')

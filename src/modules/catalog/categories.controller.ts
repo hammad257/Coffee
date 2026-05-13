@@ -8,8 +8,10 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CatalogService } from './catalog.service';
 import {
@@ -19,6 +21,9 @@ import {
   ListCategoriesQueryDto,
   UpdateCategoryDto,
 } from './dto/catalog.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Express } from 'express';
+import { multerImageOptions } from '../../common/upload/multer-image.config';
 
 @ApiTags('POS — Catalog')
 @ApiBearerAuth('access-token')
@@ -58,6 +63,28 @@ export class CategoriesController {
   @ApiOperation({ summary: 'Create category (slug optional — auto from name)' })
   create(@Body() dto: CreateCategoryDto) {
     return this.catalog.createCategory(dto);
+  }
+
+  @Patch(':id/image')
+  @Permissions('coffee.category.update')
+  @UseInterceptors(FileInterceptor('file', multerImageOptions('categories')))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiOperation({
+    summary:
+      'Upload category image — API returns absolute imageUrl (PUBLIC_BASE_URL + /uploads/categories/…)',
+  })
+  uploadCategoryImage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.catalog.updateCategoryImage(id, file);
   }
 
   @Patch(':id')

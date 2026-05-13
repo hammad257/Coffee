@@ -4,6 +4,7 @@ import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsOptional,
@@ -55,7 +56,50 @@ export class CreateUserDto {
 
 export class UpdateUserDto extends PartialType(
   OmitType(CreateUserDto, ['password', 'roleIds'] as const),
-) {}
+) {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(48)
+  phone?: string | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  bio?: string | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  jobTitle?: string | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  workLocation?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'daily_digest | realtime | weekly | off',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  notificationFrequency?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(24)
+  systemLanguage?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  twoFactorEnabled?: boolean;
+}
 
 export class UpdateUserPasswordDto {
   @ApiProperty({ minLength: 8 })
